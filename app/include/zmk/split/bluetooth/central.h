@@ -11,6 +11,9 @@
 int zmk_split_invoke_behavior(uint8_t source, struct zmk_behavior_binding *binding,
                               struct zmk_behavior_binding_event event, bool state);
 
+int zmk_run_behavior(struct zmk_behavior_binding *binding, struct zmk_behavior_binding_event event,
+                     uint8_t source, bool pressed);
+
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
 
 int zmk_split_bt_update_hid_indicator(zmk_hid_indicators_t indicators);
