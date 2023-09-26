@@ -17,14 +17,52 @@
 #include <zmk/hid_indicators.h>
 #endif // IS_ENABLED(CONFIG_ZMK_HID_INDICATORS)
 #include <zmk/event_manager.h>
+#include <zmk/workqueue.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static const struct device *hid_dev;
 
-static K_SEM_DEFINE(hid_sem, 1, 1);
+struct usb_hid_msg {
+    uint8_t data[CONFIG_HID_INTERRUPT_EP_MPS];
+    uint8_t len;
+};
 
-static void in_ready_cb(const struct device *dev) { k_sem_give(&hid_sem); }
+// Keep track of the number of consecutive HID writes failures so messages can
+// be dropped if they continuously fail to send.
+static int usb_hid_failed;
+
+K_MSGQ_DEFINE(usb_hid_msgq, sizeof(struct usb_hid_msg), 8, 1);
+
+static void usb_hid_work_handler(struct k_work *work) {
+    struct usb_hid_msg msg;
+    while (k_msgq_peek(&usb_hid_msgq, &msg) == 0) {
+        // Attempt to write HID message. If it fails, retry with up to a total
+        // of three attempts. Reattempt after 10ms or when the USB HID interrupt
+        // IN endpoint is ready, whichever comes first.
+        int err = hid_int_ep_write(hid_dev, msg.data, msg.len, NULL);
+        if (err) {
+            usb_hid_failed++;
+            if (usb_hid_failed < 3) {
+                k_work_reschedule_for_queue(zmk_workqueue_lowprio_work_q(),
+                                            k_work_delayable_from_work(work), K_MSEC(10));
+                return;
+            } else {
+                LOG_ERR("dropped HID message due to %d consecutive failures", usb_hid_failed);
+            }
+        }
+
+        // Remove message from message queue and reset failure count.
+        k_msgq_get(&usb_hid_msgq, &msg, K_NO_WAIT);
+        usb_hid_failed = 0;
+    }
+}
+
+K_WORK_DELAYABLE_DEFINE(usb_hid_work, usb_hid_work_handler);
+
+static void in_ready_cb(const struct device *dev) {
+    k_work_reschedule_for_queue(zmk_workqueue_lowprio_work_q(), &usb_hid_work, K_NO_WAIT);
+}
 
 #define HID_GET_REPORT_TYPE_MASK 0xff00
 #define HID_GET_REPORT_ID_MASK 0x00ff
@@ -135,15 +173,19 @@ static int zmk_usb_hid_send_report(const uint8_t *report, size_t len) {
     case USB_DC_DISCONNECTED:
     case USB_DC_UNKNOWN:
         return -ENODEV;
-    default:
-        k_sem_take(&hid_sem, K_MSEC(30));
-        int err = hid_int_ep_write(hid_dev, report, len, NULL);
-
-        if (err) {
-            k_sem_give(&hid_sem);
+    default: {
+        struct usb_hid_msg msg = {.len = len};
+        memcpy(&msg.data, report, len);
+        if (k_msgq_put(&usb_hid_msgq, &msg, K_NO_WAIT)) {
+            LOG_ERR("failed to add HID message to queue");
+        } else {
+            // Add to queue. This uses "schedule" rather than "reschedule"
+            // to keep the existing delay if the work item is already in the
+            // queue such as following a USB HID write failure.
+            k_work_schedule_for_queue(zmk_workqueue_lowprio_work_q(), &usb_hid_work, K_NO_WAIT);
         }
-
-        return err;
+        return 0;
+    }
     }
 }
 
