@@ -798,4 +798,4 @@ static int zmk_split_bt_central_init(void) {
 #endif // IS_ENABLED(CONFIG_SETTINGS)
 }
 
-SYS_INIT(zmk_split_bt_central_init, APPLICATION, CONFIG_ZMK_BLE_INIT_PRIORITY);
+SYS_INIT(zmk_split_bt_central_init, APPLICATION, CONFIG_ZMK_SPLIT_INIT_PRIORITY);
