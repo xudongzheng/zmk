@@ -1,9 +1,10 @@
 #include <dt-bindings/zmk/matrix_transform.h>
 
+#include <layouts/slicemk/ergodox.dtsi>
+
 / {
     chosen {
-        zmk,kscan = &kscan0;
-        zmk,matrix_transform = &default_transform;
+        zmk,physical-layout = &layout_ergodox;
     };
 
     default_transform: keymap_transform_0 {
@@ -22,4 +23,9 @@
                                                             RC(6,1) RC(6,12)
         >;
     };
+};
+
+&layout_ergodox {
+    kscan = <&kscan0>;
+    transform = <&default_transform>;
 };
